@@ -1,0 +1,66 @@
+# ═══ 认证与隐私（绝对不要提交）═══
+# auth.json 里有所有用户的 PBKDF2 盐 + 哈希，泄露后可离线爆破密码
+auth.json
+auth.json.bak
+audit.log
+blocklist.json
+
+# ═══ 运行时数据 ═══
+last.json
+api_cfg.json
+config.json
+*.log
+*.err
+launcher_run.log
+launcher_run.err
+gw.log
+gw.err
+backend.log
+gateway_warn.log
+gateway_stdout.log
+launcher.log
+launcher_2nd.log
+launcher_2nd.err
+
+# ═══ 备份目录 ═══
+backup_*/
+*.bak
+*.orig
+
+# ═══ Python ═══
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# ═══ 模型文件（体积巨大，不入库）═══
+*.gguf
+*.bin
+*.safetensors
+models/
+
+# ═══ 系统 ═══
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ═══ 编辑器 ═══
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ═══ 个人/内部文件（不入库）═══
+交接文档.txt
+启动.bat
+限制抖音.bat
+
+# 私有文件（用通配符，避免中文/编码差异导致匹配失败）
+/交接*.txt
+/启动*.bat
+/限制*.bat
+/限制*.ps1

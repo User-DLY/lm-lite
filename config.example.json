@@ -1,0 +1,5 @@
+{
+  "_说明": "复制本文件为 config.json 并改成你自己的路径。也可以不建，用环境变量 LM_LITE_BACKEND。",
+  "backend_dir": "D:\\llama.cpp\\build\\bin",
+  "model_dir": "C:\\Users\\你的用户名\\.lmstudio\\models"
+}
