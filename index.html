@@ -527,7 +527,7 @@ html.light #glow{background:radial-gradient(circle,rgba(79,70,229,.10) 0%,rgba(1
 }
 .sec h3 .no{display:inline-block;margin-right:9px;padding:1px 7px;border-radius:5px;
   background:var(--ac-soft);border:1px solid var(--ac-line);color:var(--ac);
-  font-size:9.5px;letter-spacing:.5px;vertical-align:1px}
+  font-size:10px;letter-spacing:.5px;vertical-align:1px}
 .secdesc{font-size:11.5px;color:var(--dim2);line-height:1.7;margin:-6px 0 15px}
 .secdesc b{color:var(--dim);font-weight:600}
 /* 行内控件下方的小字说明（跟随 label 缩进） */
@@ -616,7 +616,7 @@ select:focus,input:focus{border-color:var(--ac-line);box-shadow:0 0 0 3px var(--
 .conv:hover .more{opacity:1}
 .conv .more:hover{background:var(--s3);color:var(--tx)}
 /* 置顶标记 */
-.conv .pindot{color:var(--ac);font-size:9px;margin-left:5px;vertical-align:1px}
+.conv .pindot{color:var(--ac);font-size:10px;margin-left:5px;vertical-align:1px}
 .conv.pinned{background:linear-gradient(90deg,rgba(129,140,248,.07),transparent 70%)}
 
 /* 多选模式：复选框 + 整行可点 */
@@ -894,7 +894,7 @@ body,#rail,#top,.sec,.chartBox,.pill,#composer,.thinkHead,.think,#cbox,.duo .car
 .userbadge{font-size:10px;color:var(--ac);background:var(--ac-soft);
   padding:2px 7px;border-radius:5px;flex-shrink:0;white-space:nowrap;
   font-weight:600;letter-spacing:.2px}
-.appver{font-size:9.5px;color:var(--dim2);font-variant-numeric:tabular-nums;
+.appver{font-size:10px;color:var(--dim2);font-variant-numeric:tabular-nums;
   padding:2px 5px;border-radius:4px;background:var(--s2);flex-shrink:0;
   letter-spacing:-.2px;cursor:help;user-select:all}
 .mmenu{display:none;width:36px;height:36px;flex-shrink:0;border-radius:50%;
@@ -1132,7 +1132,7 @@ body,#rail,#top,.sec,.chartBox,.pill,#composer,.thinkHead,.think,#cbox,.duo .car
 /* ⓘ 圆形提示图标（hover 出气泡） */
 .info{display:inline-flex;align-items:center;justify-content:center;
   width:14px;height:14px;border-radius:50%;border:1px solid var(--ln2);
-  font-size:9.5px;font-weight:700;color:var(--dim2);cursor:help;
+  font-size:10px;font-weight:700;color:var(--dim2);cursor:help;
   flex-shrink:0;position:relative;font-style:normal;line-height:1;
   transition:border-color .15s,color .15s,background .15s}
 .info:hover{border-color:var(--ac);color:var(--ac);background:var(--ac-soft)}
@@ -1269,7 +1269,7 @@ body,#rail,#top,.sec,.chartBox,.pill,#composer,.thinkHead,.think,#cbox,.duo .car
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .peerRow .cnt{color:var(--dim);font-variant-numeric:tabular-nums;flex-shrink:0;font-size:10.5px}
 .peerRow.me .ip{color:var(--ac)}
-.peerRow.me .ip::after{content:' 本机';color:var(--dim2);font-weight:400;font-size:9.5px}
+.peerRow.me .ip::after{content:' 本机';color:var(--dim2);font-weight:400;font-size:10px}
 .btn.sm{padding:3px 10px;font-size:11px}
 
 /* 开关 */
@@ -4995,6 +4995,24 @@ $('inp').addEventListener('input', function(){
 });
 // 失焦/关页时立刻补一次，避免丢最后几个字
 $('inp').addEventListener('blur', ()=>{ if(_draftTimer){ clearTimeout(_draftTimer); _draftTimer = null; } saveDraft(); });
+/* ★ 多标签同步：A 标签改了会话，B 标签要能感知。
+   原来没有 storage 监听，两个标签同时聊天时后保存的会覆盖先保存的，
+   丢消息且没有任何提示。这里在收到变更时重新加载并提示。 */
+let _storageSelf = false;
+window.addEventListener('storage', (e)=>{
+  if(!e.key) return;
+  // 聊天记录被别的标签改写
+  if(e.key === dataKey('lml_convs')){
+    try{
+      const before = (typeof convs !== 'undefined') ? convs.length : 0;
+      loadConvs();
+      renderConvs();
+      if(typeof renderConv === 'function') renderConv();
+      toast('聊天记录已在另一个标签页更新，已同步（' + before + ' 个会话）', 'wn');
+    }catch(err){ warn('多标签同步失败', err); }
+  }
+});
+
 window.addEventListener('beforeunload', ()=>{ if(_draftTimer){ clearTimeout(_draftTimer); _draftTimer = null; } try{ saveDraft(); }catch(e){} });
 
 /* ═══════════════════════════════════════════════════

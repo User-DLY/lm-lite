@@ -282,6 +282,33 @@ def _drop_session(tok):
         _SESSIONS.pop(tok, None)
 
 
+# ═══ 聊天限速：防局域网用户持续占用显存 ═══
+# 登录有锁定，但登录后的聊天请求没有限制：一个普通用户狂发请求就能把
+# 单槽后端和显存长期占满，本机用户反而抢不到。
+_CHAT_HITS = {}                      # ip -> [时间戳]
+_CHAT_LOCK = threading.Lock()
+CHAT_WINDOW = 60                     # 统计窗口（秒）
+CHAT_MAX_PER_WIN = 30                # 每窗口最多多少次
+
+
+def _chat_allow(ip):
+    """返回 True 表示放行；False 表示超限"""
+    now = time.time()
+    with _CHAT_LOCK:
+        arr = [t for t in (_CHAT_HITS.get(ip) or []) if now - t < CHAT_WINDOW]
+        if len(arr) >= CHAT_MAX_PER_WIN:
+            _CHAT_HITS[ip] = arr
+            return False
+        arr.append(now)
+        _CHAT_HITS[ip] = arr
+        # 清理长期不活跃的 key，防内存增长
+        if len(_CHAT_HITS) > 256:
+            for k in list(_CHAT_HITS.keys()):
+                if not _CHAT_HITS[k]:
+                    _CHAT_HITS.pop(k, None)
+    return True
+
+
 # ═══ 登录限速：防暴力破解 ═══
 # 同一 IP 连续失败 N 次就锁一段时间；成功一次即清零。
 # 没有这个，局域网里任何人都能拿字典刷密码 —— 这是"普通攻击者获取电脑权限"
@@ -602,7 +629,30 @@ def _find_models_uncached():
     return out
 
 
+_ALIVE_CACHE = {"t": 0.0, "v": False}
+_ALIVE_LOCK = threading.Lock()
+
+
 def backend_alive():
+    """带 1.5 秒 TTL 的存活探测。
+
+    proxy() 与 _proxy_stream() 各调一次，一次聊天会多两条到 8081 的 HTTP
+    往返（实测 0.8~20ms，叠加 15~40ms）。TTL 缓存把它压成一次。
+    成功探测缓存久一点、失败探测短一点，避免后端刚起来时被判死。"""
+    import time as _t
+    now = _t.time()
+    with _ALIVE_LOCK:
+        c = _ALIVE_CACHE
+        if c["t"] and (now - c["t"]) < (1.5 if c["v"] else 0.4):
+            return c["v"]
+    v = _backend_alive_raw()
+    with _ALIVE_LOCK:
+        _ALIVE_CACHE["t"] = _t.time()
+        _ALIVE_CACHE["v"] = v
+    return v
+
+
+def _backend_alive_raw():
     try:
         with urllib.request.urlopen("http://127.0.0.1:%d/health" % LLAMA_PORT, timeout=2) as r:
             return r.status == 200
@@ -1073,6 +1123,7 @@ def _start_backend_locked(model_path, ctx, kv, parallel=1,
                           no_reasoning_preserve=False):
     stop_backend_unlocked()
     STATE["loading"] = True
+    _ALIVE_CACHE["t"] = 0.0        # 清掉存活缓存，让调用方立刻看到"加载中"
     STATE["last_error"] = ""
     # ★ GPU 层数：None/99 = 全卸载；0 = 纯 CPU；其他值 = 部分卸载
     _ngl = 99 if gpu_layers is None else max(0, min(999, int(gpu_layers)))
@@ -1811,13 +1862,18 @@ document.getElementById('f').onsubmit = async (e)=>{
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             target = (qs.get("path") or [""])[0].strip()
 
-            # 局域网模式 + 非本机来源 → 拒绝（防止外部设备翻你的磁盘）
+            # 磁盘浏览只对 admin 开放：本机天然 admin；局域网必须已登录 admin 角色
+            # （_reject_if_forbidden 已把 /api/browse 列进 ADMIN_ONLY，这里只需
+            #   确认调用者身份，不再写死"非本机一律拒绝"——那样局域网管理员
+            #   就没法用文件选择器挑模型了）。
             try:
                 _ip = self.client_address[0]
             except Exception:
                 _ip = ""
-            if not _is_local_ip(_ip):
-                self.send_json({"error": "局域网访问禁止浏览本地磁盘"}, 403)
+            _bu, _br, _ = self._current_user()
+            _force = os.environ.get("LM_LITE_TEST_AS_REMOTE", "").strip() == "1"
+            if not (_is_local_ip(_ip) and not _force) and _br != "admin":
+                self.send_json({"error": "浏览本地磁盘需要管理员权限"}, 403)
                 return
 
             if not target:
@@ -2249,6 +2305,7 @@ document.getElementById('f').onsubmit = async (e)=>{
             STATE["ctx"] = 0
             STATE["kv"] = "q8_0"
             STATE["loading"] = False
+            _ALIVE_CACHE["t"] = 0.0
             STATE["last_error"] = ""
             # 保留 last.json：卸载是临时的，重启网关应当恢复到上次配置
             # （想彻底不加载就删掉这个文件或改内容）
@@ -2642,6 +2699,17 @@ document.getElementById('f').onsubmit = async (e)=>{
             return
 
         if path.startswith("/v1/"):
+            # ★ 聊天限速：普通用户狂发请求会长期占满单槽后端和显存
+            if path.startswith("/v1/chat") and auth_required():
+                try:
+                    _cip0 = self.client_address[0] if self.client_address else ""
+                except Exception:
+                    _cip0 = ""
+                if not _is_local_ip(_cip0) and not _chat_allow(_cip0):
+                    self.send_json({"error": {
+                        "message": "请求过于频繁，请稍后再试（每分钟最多 %d 次）" % CHAT_MAX_PER_WIN,
+                        "type": "rate_limited"}}, 429)
+                    return
             # 自动匹配 + 拉起请求的模型（DSH 切模型时无需手动操作）
             if path.endswith("/chat/completions") or path.endswith("/completions"):
                 # ★ 页面请求优先：只要 lm-lite 自己要模型，就把别的请求（DSH 等）掐掉
@@ -2703,16 +2771,22 @@ document.getElementById('f').onsubmit = async (e)=>{
                         ok, note = ensure_model(want)
                         if not ok:
                             log_warn("切换失败 model=%r: %s" % (want, note))
-                            self.send_json({"error": {"message": "模型切换失败: " + str(note),
-                                                      "type": "model_load_failed"}}, 503)
+                            # note 里可能有上层传下来的细节，但模型路径之类
+                            # 不该回给调用方；保留简短原因即可
+                            self.send_json({"error": {
+                                "message": "模型切换失败，请检查模型是否可用",
+                                "type": "model_load_failed"}}, 503)
                             return
                         if note == "已自动切换":
                             log_warn("自动切换模型: %s" % want)
                 except Exception as e:
                     # ★ 绝不静默：不能让旧模型糊弄客户端
+                    # 但也不能把内部异常原文回给调用方（可能含路径、字段名、
+                    # 解析器提示如 "Expecting property name..."）——细节只进日志。
                     log_warn("v1 预处理异常: %r" % (e,))
-                    self.send_json({"error": {"message": "网关预处理失败: %s" % e,
-                                              "type": "gateway_error"}}, 500)
+                    self.send_json({"error": {
+                        "message": "网关预处理失败（详情见网关日志）",
+                        "type": "gateway_error"}}, 500)
                     return
             self.proxy(path, body)
             return
@@ -2729,7 +2803,9 @@ document.getElementById('f').onsubmit = async (e)=>{
             try:
                 save_api_cfg(cfg)
             except Exception as e:
-                self.send_json({"ok": False, "error": "保存失败: %s" % e}, 500)
+                log_warn("保存 api 默认值失败: %r" % (e,))
+                self.send_json({"ok": False,
+                                "error": "保存失败（详情见网关日志）"}, 500)
                 return
             self.send_json({"ok": True, "cfg": cfg})
             return
