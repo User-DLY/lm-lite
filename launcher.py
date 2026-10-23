@@ -221,7 +221,7 @@ def _stop_backend_first():
         ps = (
             "Get-CimInstance Win32_Process -Filter \"Name='llama-server.exe'\" | "
             "Where-Object { $_.CommandLine -like '*lm-lite*' -or "
-            "$_.CommandLine -like '*AI_Agent_Project*' } | "
+            "$_.CommandLine -like '*llama-server*' } | "
             "ForEach-Object { Stop-Process -Id $_.ProcessId -Force; $_.ProcessId }"
         )
         r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
