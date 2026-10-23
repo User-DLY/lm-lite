@@ -213,7 +213,7 @@ MIT —— 随便用，随便改，出问题别找我。
 |---|---|
 | **OpenAI Chat Completions API** | 网关对外暴露的是同构接口（`/v1/chat/completions`），所以 DSH、Open WebUI、各类 SDK 都能直接接上 |
 | **llama.cpp server** | `-np`（并行槽位）/ `-fa`（Flash Attention）/ `-b` `-ub`（批大小）等参数的语义与默认值 |
-| **DSH（DeepSeek Harness）** | 多客户端来源区分（`X-LML-Web` 头 vs 外部 API），以及「本机请求优先」的调度策略 |
+| **多客户端并发场景** | 多客户端来源区分（`X-LML-Web` 头 vs 外部 API），以及「本机请求优先」的调度策略 |
 
 ### 明确没做的
 - **分享**：DeepSeek 有，这里没有 —— 本地模型场景下分享会话意义不大，且涉及隐私。

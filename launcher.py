@@ -32,8 +32,8 @@ GATEWAY = os.path.join(HERE, "gateway.py")
 # llama-server 所在目录。优先级：
 #   1) 环境变量 LM_LITE_BACKEND
 #   2) 同目录下 config.json 的 backend_dir
-#   3) 下面这个默认值（改这里也行）
-_DEFAULT_BACKEND = r"D:\AI_Agent_Project\llama-rocm-win"
+#   3) 同目录下的 backend/ 文件夹（推荐：把 llama-server 放进去即可）
+_DEFAULT_BACKEND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend")
 BACKEND_DIR = os.environ.get("LM_LITE_BACKEND") or _DEFAULT_BACKEND
 try:
     _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
