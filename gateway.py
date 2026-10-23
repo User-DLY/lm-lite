@@ -2849,6 +2849,7 @@ document.getElementById('f').onsubmit = async (e)=>{
         _err_msg = ""
         self._stream_err = ""
         self._last_info = {}          # ★ 每次请求先清空，否则 keep-alive 复用同一 handler 时，
+        self._stream_chars = 0        # 已转发的正文/思考字符数（停止时估算 token 用）
                                       #   _proxy_stream 提前 return（未就绪/HTTPError/连不上）
                                       #   会让这一笔沿用上一笔的 token/ttft 指标并被记成"已完成"
         try:
@@ -2866,6 +2867,15 @@ document.getElementById('f').onsubmit = async (e)=>{
                 if not _ok:
                     _info = dict(_info)
                     _info["err"] = _err_msg or getattr(self, "_stream_err", "") or "请求失败"
+                # ★ 停止/断流时后端不会返回 usage，outTok 是 0 —— 队列里会出现
+                #   "已停止"却显示 0 token，与"保留已流出正文"的设计不一致。
+                #   这里用已转发字符数按经验比（中文≈1.5 字/token）估算补上。
+                if not _info.get("outTok"):
+                    _ch = getattr(self, "_stream_chars", 0) or 0
+                    if _ch > 0:
+                        _info = dict(_info)
+                        _info["outTok"] = max(1, int(_ch / 1.5))
+                        _info["_estimated"] = True
                 req_end(_rec, "done" if _ok else "error", _info)
             except Exception:
                 pass
@@ -2918,6 +2928,28 @@ document.getElementById('f').onsubmit = async (e)=>{
                     break
                 self.wfile.write(chunk)
                 self.wfile.flush()
+                # 累计已转发的【正文字符数】：只解析 SSE 里的 content /
+                # reasoning_content，不能直接 len(chunk) —— 那里面还有
+                # "data: {...}" 包装和 JSON 结构，实测会把 34672 字节
+                # 误算成 34672 token。
+                try:
+                    for _ln in chunk.split(b"\n"):
+                        if not _ln.startswith(b"data: "):
+                            continue
+                        _pl = _ln[6:].strip()
+                        if not _pl or _pl == b"[DONE]":
+                            continue
+                        try:
+                            _o = json.loads(_pl)
+                        except Exception:
+                            continue
+                        _d = (_o.get("choices") or [{}])[0].get("delta") or {}
+                        _txt = (_d.get("content") or "") + (_d.get("reasoning_content") or "")
+                        if _txt:
+                            self._stream_chars = (getattr(self, "_stream_chars", 0)
+                                                  + len(_txt))
+                except Exception:
+                    pass
                 probe = (probe + chunk)[-8192:]
 
                 # 只在还没拿到两个首字前做逐行解析（拿到后就不再解析，省 CPU）

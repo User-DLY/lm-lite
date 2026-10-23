@@ -4866,8 +4866,10 @@ async function send(){
       '正文字符: ' + chars + '\n' +
       (timings ? '\n── 服务端权威数字 ──\n' +
         '缓存命中: ' + cacheN + ' token / 实际计算 ' + procN + ' token（命中率 ' + hitPct + '%）\n' +
-        '预填充耗时: ' + (+(timings.prompt_ms||0)) + ' ms（' + (+(timings.prompt_per_second||0)) + ' tok/s）\n' +
-        '生成耗时: ' + (+(timings.predicted_ms||0)) + ' ms（' + (+(timings.predicted_per_second||0)) + ' tok/s）\n' +
+        '预填充耗时: ' + (timings.prompt_ms != null ? (+timings.prompt_ms) + ' ms' : '—') +
+          '（' + (timings.prompt_per_second != null ? (+timings.prompt_per_second).toFixed(1) + ' tok/s' : '—') + '）\n' +
+        '生成耗时: ' + (timings.predicted_ms != null ? (+timings.predicted_ms) + ' ms' : '—') +
+          '（' + (timings.predicted_per_second != null ? (+timings.predicted_per_second).toFixed(1) + ' tok/s' : '—') + '）\n' +
         '生成 token: ' + (+(timings.predicted_n||0)) + '\n' : '') +
       '\n── usage ──\n' + (usage ? JSON.stringify(usage,null,2) : '（无）');
 
