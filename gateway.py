@@ -352,6 +352,9 @@ def _local_ip():
 
 
 def _is_local_ip(ip):
+    # ⚠ 临时强制外部模式（安全测试用，测完必须还原）
+    if os.environ.get("LM_LITE_TEST_AS_REMOTE", "").strip() == "1":
+        return False
     return (not ip) or ip in ("127.0.0.1", "::1", "localhost") or ip.startswith("127.")
 
 BLOCKLIST = set()          # 被拉黑的 IP，所有请求一律忽略
@@ -1309,6 +1312,9 @@ def _record_from_probe(blob, is_web=False, t_req=None, t_think=None, t_body=None
 
 
 class Handler(BaseHTTPRequestHandler):
+    # 不暴露 Python 版本号
+    server_version = "lm-lite"
+    sys_version = ""
     protocol_version = "HTTP/1.1"      # ★ 启用 keep-alive，省掉每个请求的 TCP 建连
     server_version = "lm-lite/1.0"
 
@@ -1415,6 +1421,9 @@ document.getElementById('f').onsubmit = async (e)=>{
         "/api/auth_config", "/api/block", "/api/queue/clear",
         "/api/model-dirs", "/api/browse", "/api/gguf-meta",
         "/api/stats", "/api/load-profile",
+        # 审计日志（谁在什么时候做了什么、来源 IP）与后端运行日志
+        # （可能含提示词片段）都属于敏感信息，普通用户不可读。
+        "/api/audit", "/api/log",
     )
 
     def _current_user(self):
@@ -1434,12 +1443,19 @@ document.getElementById('f').onsubmit = async (e)=>{
         return info.get("user"), info.get("role"), tok
 
     def _reject_if_forbidden(self, path):
-        """已登录但权限不够 → 403。必须在 _reject_if_unauthed 之后调用。"""
-        if not auth_required():
-            return False
+        """非本机来源调管理类接口 → 必须是 admin。必须在 _reject_if_unauthed 之后调用。
+
+        ⚠ 这里【不能】因为 auth_required() 为假就整体放行：
+        登录保护关闭时，局域网任何人都能 POST /api/auth_config 自建 admin 账号，
+        然后再让你打开登录保护，就永久拿到了管理权 —— 而所有者只看到
+        "登录保护已开启"，不会知道多了一个管理员。
+
+        正确语义：本机 = 无条件 admin（物理接触即信任）；
+        非本机 = 无论登录保护开没开，管理类接口一律要求 role 为 admin
+        （没开启登录时就没有 admin 会话，等于全部拒绝 —— 这是刻意的）。
+        """
         _u, role, _t = self._current_user()
-        # 本机（物理操控这台电脑的人）视为 admin —— 否则你自己关掉登录后反而
-        # 无法改模型，与"密码只用于拦局域网别人"的既有设计矛盾。
+        # 本机（物理操控这台电脑的人）视为 admin
         try:
             _ip = self.client_address[0] if self.client_address else ""
         except Exception:
@@ -1454,6 +1470,31 @@ document.getElementById('f').onsubmit = async (e)=>{
                     self.send_json({"error": "需要管理员权限", "needAdmin": True}, 403)
                     return True
                 return False
+        return False
+
+    def _reject_if_lan_manage(self, path):
+        """开启局域网但一个密码都没设时，禁止非本机调管理类接口。
+
+        给用户一个明确的提示，而不是含糊的 403：
+        "先在本机设置一个管理员密码，再从局域网使用管理功能。"
+        """
+        try:
+            _ip = self.client_address[0] if self.client_address else ""
+        except Exception:
+            _ip = ""
+        _force_remote = os.environ.get("LM_LITE_FORCE_REMOTE", "").strip() == "1"
+        if _is_local_ip(_ip) and not _force_remote:
+            return False
+        us = AUTH.get("users") or {}
+        has_pw = any((v.get("hash") and v.get("salt")) for v in us.values())
+        if has_pw:
+            return False
+        for p in self.ADMIN_ONLY:
+            if path == p or path.startswith(p + "/") or path.startswith(p + "?"):
+                self.send_json({
+                    "error": "尚未设置管理员密码，请先在本机设置后再从局域网使用管理功能",
+                    "needSetup": True}, 403)
+                return True
         return False
 
     def _reject_if_unauthed(self, path):
@@ -1546,12 +1587,23 @@ document.getElementById('f').onsubmit = async (e)=>{
             pass
         return False
 
+    def _security_headers(self):
+        """统一安全响应头（防点击劫持、MIME 嗅探、referrer 泄露）"""
+        try:
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "SAMEORIGIN")
+            self.send_header("Referrer-Policy", "same-origin")
+            self.send_header("X-XSS-Protection", "1; mode=block")
+        except Exception:
+            pass
+
     def send_json(self, obj, code=200):
         b = json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
         self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         o = self._origin()
         if o and self._origin_ok():          # 只有明确带 Origin 且通过，才回显
             self.send_header("Access-Control-Allow-Origin", o)
@@ -1590,6 +1642,8 @@ document.getElementById('f').onsubmit = async (e)=>{
             if self._reject_if_lan_off():
                 return
             if self._reject_if_unauthed(path):
+                return
+            if self._reject_if_lan_manage(path):
                 return
             if self._reject_if_forbidden(path):
                 return
